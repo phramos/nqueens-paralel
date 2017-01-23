@@ -1,21 +1,30 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <time.h>
 #include <math.h>
 
 #define QUEEN 'Q'
 #define TRUE 1
-#define FALSE 0
+#define FALSE 666
 #define NOT_SET -1
 
-int queens = 0;
-int threads = 0;
+int numberOfQueens = 0;
+int numberOfThreads = 0;
 int boardSize = 0;
 int queensPerThread = 0;
 int solutioNumber = 0;
 int *solution;
-//char *board;
+pthread_t* threads;//char *board;
 
+struct timespec begin, end;
+
+struct safePositionThreadParams {
+    int i;
+    int newQueenCol;
+    int newQueenRow;
+    int *board;
+};
 
 /*imprime a solucao. Formato da solucao e um array em que cada posicao do array indica a uma coluna no tabuleiro, e o
  * valor nessa coluna indica a linha onde a rainha esta
@@ -41,7 +50,7 @@ void printSolution(int solution[], int solutionNumber) {
 /*
  * Verifica se eh seguro colocar uma nova rainha na coluna definida na devida linha
  */
-int isSafePosition(int newQueenCol, int newQueenRow, int board[]) {
+int isSafePositionSerial(int newQueenCol, int newQueenRow, int *board) {
     int i = 0;
     for (i=0; i<newQueenCol; i++) {
         if (board[i] == newQueenRow) {
@@ -59,16 +68,157 @@ int isSafePosition(int newQueenCol, int newQueenRow, int board[]) {
     return TRUE;
 }
 
-//resolve o problema das n rainhas
-void solve(int col) {
+
+void *isSafe(void *args) {
+    struct safePositionThreadParams *threadParams = args;
+//    printf("\ni=%d",threadParams->i);
+//    printf("\nrol=%d",threadParams->newQueenCol);
+//    printSolution(threadParams->board, 1);
+    int safe = FALSE;
+    if (threadParams->board[threadParams->i] == threadParams->newQueenRow) {
+        safe = FALSE;
+    } else {
+        //checa as diagonais
+        int difference = abs(threadParams->newQueenCol-threadParams->i);
+        int notSafe1 = threadParams->board[threadParams->i]-difference;
+        int notSafe2 = threadParams->board[threadParams->i]+difference;
+        if (threadParams->newQueenRow == notSafe1 || threadParams->newQueenRow == notSafe2) {
+            safe = FALSE;
+        } else {
+            safe = TRUE;
+        }
+    }
+    free(args);
+    return (void*) safe;
+}
+
+
+int isSafePositionParalel(int newQueenCol, int newQueenRow, int *board) {
+    int i = 0;
+
+    //parte que divide a quantidade de threads para poder paralelizar a verificacao de posicao segura para a nova rainha
+    if (newQueenCol > numberOfThreads) {
+        int colsProcessed = 0;
+//        while (colsProcessed <= newQueenCol) {
+        while (colsProcessed < newQueenCol) {
+            int threadsToOpen;
+            //TODO: Verificar possibilidade de erro aqui
+            //verifica a quantidade de threads a serem abertas para processamento
+//            if (numberOfThreads > (colsProcessed + ((newQueenCol+1)-colsProcessed))) {
+            if (numberOfThreads > (newQueenCol) - colsProcessed) {
+                threadsToOpen = newQueenCol-colsProcessed;
+            } else {
+                threadsToOpen = numberOfThreads;
+            }
+
+            threads = malloc(threadsToOpen * sizeof(pthread_t));
+            int *returnFromIsSafe = malloc(threadsToOpen * sizeof(int));
+            for (i=0; i<threadsToOpen; i++) {
+                struct safePositionThreadParams *args = malloc(sizeof(struct safePositionThreadParams));
+                args->i = i + colsProcessed;
+                args->newQueenCol = newQueenCol;
+                args->newQueenRow = newQueenRow;
+                args->board = board;
+
+                pthread_create(&threads[i], NULL, isSafe, (void *)args);
+
+            }
+
+            for(i = 0; i < threadsToOpen; ++i){
+                pthread_join(threads[i], (void**) &returnFromIsSafe[i]);
+            }
+            for (i = 0; i < threadsToOpen; i++) {
+//                printf("\nretorno: %d", returnFromIsSafe[i]);
+                if (returnFromIsSafe[i] == FALSE){
+                    free(threads);
+                    free(returnFromIsSafe);
+                    return FALSE;
+                }
+            }
+            free(threads);
+            free(returnFromIsSafe);
+            colsProcessed += threadsToOpen;
+        }
+    } else {
+        threads = malloc(newQueenCol * sizeof(pthread_t));
+        int *returnFromIsSafe = malloc(newQueenCol * sizeof(int));
+        for (i=0; i<newQueenCol; i++) {
+            struct safePositionThreadParams *args = malloc(sizeof(struct safePositionThreadParams));
+            args->i = i;
+            args->newQueenCol = newQueenCol;
+            args->newQueenRow = newQueenRow;
+            args->board = board;
+
+            pthread_create(&threads[i], NULL, isSafe, (void *)args);
+
+        }
+        for(i = 0; i < newQueenCol; ++i)
+            pthread_join(threads[i], (void**) &returnFromIsSafe[i]);
+        for (i = 0; i < newQueenCol; i++) {
+//            printf("\nretorno: %d", returnFromIsSafe[i]);
+            if (returnFromIsSafe[i] == FALSE) {
+                free(threads);
+                free(returnFromIsSafe);
+                return FALSE;
+            }
+        }
+        free(threads);
+        free(returnFromIsSafe);
+    }
+    return TRUE;
+//    threads = malloc(newQueenCol * sizeof(pthread_t));
+//    int *returnFromIsSafe = malloc(newQueenCol * sizeof(int));
+//    for (i=0; i<newQueenCol; i++) {
+//        struct safePositionThreadParams *args = malloc(sizeof(struct safePositionThreadParams));
+//        args->i = i;
+//        args->newQueenCol = newQueenCol;
+//        args->newQueenRow = newQueenRow;
+//        args->board = board;
+//
+//        pthread_create(&threads[i], NULL, isSafe, (void *)args);
+//
+//    }
+//    for(i = 0; i < newQueenCol; ++i)
+//        pthread_join(threads[i], (void**) &returnFromIsSafe[i]);
+//    for (i = 0; i < newQueenCol; i++) {
+//        printf("\nretorno: %d", returnFromIsSafe[i]);
+////        if (returnFromIsSafe[i] == FALSE) {
+////            return FALSE;
+////        }
+//    }
+//    free(threads);
+//    free(returnFromIsSafe);
+//    //Checa os retornos
+
+}
+
+//resolve o problema das n rainhas serialmente
+void serialSolver(int col) {
     int row = 0;
     for (row=0; row<boardSize; row++){
-        int safe = isSafePosition(col, row, solution);
+        int safe = isSafePositionSerial(col, row, solution);
         if (safe == TRUE) {
             solution[col] = row;
             int nextCol = col+1;
             if (nextCol<boardSize) {
-                solve(nextCol);
+                serialSolver(nextCol);
+            } else {
+                solutioNumber ++;
+                printSolution(solution, solutioNumber);
+            }
+        }
+    }
+}
+//resolve o problema das n rainhas pralelamente
+void paralelSolver(int col) {
+    int row = 0;
+    for (row=0; row<boardSize; row++){
+        int safe = isSafePositionParalel(col, row, solution);
+        if (safe == TRUE) {
+            solution[col] = row;
+            int nextCol = col+1;
+            if (nextCol<boardSize) {
+                paralelSolver(nextCol);
             } else {
                 solutioNumber ++;
                 printSolution(solution, solutioNumber);
@@ -79,27 +229,39 @@ void solve(int col) {
 
 int main() {
     printf("Number of queens: ");
-    scanf("%d", &queens);
+    scanf("%d", &numberOfQueens);
     printf("Threads: ");
-    scanf("%d", &threads);
+    scanf("%d", &numberOfThreads);
 
     //define a dimensao da matriz de acordo com a quantidade de rainhas
-    boardSize = queens;
-    queensPerThread = queens/threads;
+    boardSize = numberOfQueens;
+    queensPerThread = numberOfQueens/numberOfThreads;
 
-    printf("\nQueens: %d", queens);
-    printf("\nThreads: %d", threads);
+    printf("\nQueens: %d", numberOfQueens);
+    printf("\nThreads: %d", numberOfThreads);
     solution=malloc(boardSize * sizeof(int));
     int i = 0;
+
+//    int test[] = {2,0,3,NOT_SET};
+//    int test[] = {NOT_SET,NOT_SET,NOT_SET,NOT_SET};
+//    int testResult =   isSafePositionSerial(0, 0, test);
+//    int testResult =   isSafePositionParalel(3, 1, test);
+//    printf("\nvalor do teste:%d", testResult);
 
     //Define a solucao como nao definida para todas as colunas
     for (i = 0; i < boardSize; ++i) {
         solution[i] = NOT_SET;
     }
-
-    solve(0);
+    clock_gettime(CLOCK_MONOTONIC, &begin);
+//    serialSolver(0);
+    paralelSolver(0);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    double timeSpent = end.tv_sec - begin.tv_sec;
+    timeSpent += (end.tv_nsec - begin.tv_nsec) / 1000000000.0;
     printf("\nTotal solutions: %d", solutioNumber);
-    return FALSE;
+    printf("\nTime spent: %.10lf seconds.\n", timeSpent);
+    free(solution);
+    return 0;
 }
 
 
